@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ type screenState int
 
 const (
 	stateSearch screenState = iota
+	stateSeasons
+	stateEpisodes
+	stateSubtitles
 )
 
 type Model struct {
@@ -33,7 +37,18 @@ type Model struct {
 	state   screenState
 	loading bool
 
-	titles []model.Title
+	titles      []model.Title
+	seasons     []int
+	allEpisodes []model.Episode
+	episodes    []model.Episode
+	subtitles   []model.Subtitle
+
+	activeTitle   model.Title
+	hasTitle      bool
+	activeSeason  int
+	activeEpisode model.Episode
+	hasEpisode    bool
+
 	cursor int
 
 	statusMessage string
@@ -53,6 +68,21 @@ type searchResultMsg struct {
 	requestID int
 	titles    []model.Title
 	err       error
+}
+
+type episodesResultMsg struct {
+	episodes []model.Episode
+	err      error
+}
+
+type subtitlesResultMsg struct {
+	subtitles []model.Subtitle
+	err       error
+}
+
+type downloadResultMsg struct {
+	result model.DownloadResult
+	err    error
 }
 
 func NewModel(app *service.SubtitleService) Model {
@@ -93,24 +123,107 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case searchResultMsg:
 		return m.handleSearchResult(msg)
-	}
+	case episodesResultMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.errorMessage = msg.err.Error()
+			m.statusMessage = "Could not load episodes."
+			return m, nil
+		}
 
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
+		m.errorMessage = ""
+		m.allEpisodes = msg.episodes
+		m.cursor = 0
+		if len(m.allEpisodes) == 0 {
+			m.statusMessage = "No episodes found for this series."
+			m.state = stateSearch
+			m.seasons = nil
+			m.episodes = nil
+			return m, nil
+		}
+
+		m.seasons = collectSeasons(m.allEpisodes)
+		if len(m.seasons) == 0 {
+			m.episodes = m.allEpisodes
+			m.activeSeason = 0
+			m.state = stateEpisodes
+			m.statusMessage = "Select an episode and press enter."
+			return m, nil
+		}
+
+		m.activeSeason = 0
+		m.episodes = nil
+		m.state = stateSeasons
+		m.statusMessage = "Select a season and press enter."
+		return m, nil
+	case subtitlesResultMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.errorMessage = msg.err.Error()
+			m.statusMessage = "Could not load subtitles."
+			return m, nil
+		}
+
+		m.errorMessage = ""
+		m.subtitles = msg.subtitles
+		m.cursor = 0
+		m.state = stateSubtitles
+		if len(m.subtitles) == 0 {
+			m.statusMessage = "No subtitles found for this selection."
+			if m.hasTitle && m.activeTitle.IsSeries() {
+				m.state = stateEpisodes
+			} else {
+				m.state = stateSearch
+			}
+			return m, nil
+		}
+
+		m.statusMessage = "Select a subtitle and press enter to download."
+		return m, nil
+	case downloadResultMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.errorMessage = msg.err.Error()
+			m.statusMessage = "Download failed."
+			return m, nil
+		}
+
+		m.errorMessage = ""
+		m.statusMessage = fmt.Sprintf("Downloaded %d subtitle file(s) to %s.", len(msg.result.ExtractedPaths), msg.result.OutputDir)
 		return m, nil
 	}
 
-	switch keyMsg.String() {
-	case "ctrl+c", "esc":
-		m.cancelSearch()
-		return m, tea.Quit
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.cancelSearch()
+			return m, tea.Quit
+		case "esc":
+			if m.state == stateSearch {
+				m.cancelSearch()
+				return m, tea.Quit
+			}
+			return m.navigateBack()
+		}
+
+		if m.loading {
+			return m, nil
+		}
+
+		switch m.state {
+		case stateSearch:
+			return m.updateSearchState(msg)
+		case stateSeasons:
+			return m.updateSeasonState(msg)
+		case stateEpisodes:
+			return m.updateEpisodeState(msg)
+		case stateSubtitles:
+			return m.updateSubtitleState(msg)
+		}
 	}
 
-	if m.loading {
-		return m, nil
-	}
-
-	return m.updateSearchState(keyMsg)
+	return m, nil
 }
 
 func (m Model) View() string {
@@ -125,33 +238,96 @@ func (m Model) View() string {
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(sectionTitleStyle.Render("Search results"))
-	b.WriteByte('\n')
+	switch m.state {
+	case stateSearch:
+		b.WriteString(sectionTitleStyle.Render("Search results"))
+		b.WriteByte('\n')
+		start, end := visibleWindowBounds(len(m.titles), m.cursor)
+		for i := start; i < end; i++ {
+			title := m.titles[i]
+			kind := movieTagStyle.Render("MOVIE")
+			if title.IsSeries() {
+				kind = seriesTagStyle.Render("SERIES")
+			}
 
-	start, end := visibleWindowBounds(len(m.titles), m.cursor)
-	for i := start; i < end; i++ {
-		title := m.titles[i]
-		kind := movieTagStyle.Render("MOVIE")
-		if title.IsSeries() {
-			kind = seriesTagStyle.Render("SERIES")
+			line := fmt.Sprintf("[%s] %s", kind, title.Name)
+			if title.Year > 0 {
+				line += fmt.Sprintf(" (%d)", title.Year)
+			}
+			b.WriteString(renderSelectableLine(i == m.cursor, line))
+			b.WriteByte('\n')
 		}
-
-		line := fmt.Sprintf("[%s] %s", kind, title.Name)
-		if title.Year > 0 {
-			line += fmt.Sprintf(" (%d)", title.Year)
+		if len(m.titles) == 0 {
+			b.WriteString(hintStyle.Render("  (no results yet)"))
+			b.WriteByte('\n')
+		} else if len(m.titles) > maxVisibleItems {
+			b.WriteByte('\n')
+			b.WriteString(hintStyle.Render(fmt.Sprintf("Showing %d-%d of %d.", start+1, end, len(m.titles))))
+			b.WriteByte('\n')
 		}
+	case stateSeasons:
+		b.WriteString(sectionTitleStyle.Render("Seasons"))
+		b.WriteByte('\n')
+		start, end := visibleWindowBounds(len(m.seasons), m.cursor)
+		for i := start; i < end; i++ {
+			line := fmt.Sprintf("Season %d", m.seasons[i])
+			b.WriteString(renderSelectableLine(i == m.cursor, line))
+			b.WriteByte('\n')
+		}
+		if len(m.seasons) == 0 {
+			b.WriteString(hintStyle.Render("  (no seasons loaded)"))
+			b.WriteByte('\n')
+		} else if len(m.seasons) > maxVisibleItems {
+			b.WriteByte('\n')
+			b.WriteString(hintStyle.Render(fmt.Sprintf("Showing %d-%d of %d.", start+1, end, len(m.seasons))))
+			b.WriteByte('\n')
+		}
+	case stateEpisodes:
+		b.WriteString(sectionTitleStyle.Render("Episodes"))
+		b.WriteByte('\n')
+		start, end := visibleWindowBounds(len(m.episodes), m.cursor)
+		for i := start; i < end; i++ {
+			episode := m.episodes[i]
+			line := fmt.Sprintf("S%02dE%02d - %s", episode.Season, episode.Number, episode.EpisodeName)
+			b.WriteString(renderSelectableLine(i == m.cursor, line))
+			b.WriteByte('\n')
+		}
+		if len(m.episodes) == 0 {
+			b.WriteString(hintStyle.Render("  (no episodes loaded)"))
+			b.WriteByte('\n')
+		} else if len(m.episodes) > maxVisibleItems {
+			b.WriteByte('\n')
+			b.WriteString(hintStyle.Render(fmt.Sprintf("Showing %d-%d of %d.", start+1, end, len(m.episodes))))
+			b.WriteByte('\n')
+		}
+	case stateSubtitles:
+		b.WriteString(sectionTitleStyle.Render("Subtitles"))
+		b.WriteByte('\n')
+		start, end := visibleWindowBounds(len(m.subtitles), m.cursor)
+		for i := start; i < end; i++ {
+			sub := m.subtitles[i]
+			trusted := "no"
+			if sub.Trusted {
+				trusted = "yes"
+			}
 
-		b.WriteString(renderSelectableLine(i == m.cursor, line))
-		b.WriteByte('\n')
-	}
+			releaseName := strings.TrimSpace(sub.ReleaseName)
+			if releaseName == "" {
+				releaseName = "(no release name)"
+			}
 
-	if len(m.titles) == 0 {
-		b.WriteString(hintStyle.Render("  (no results yet)"))
-		b.WriteByte('\n')
-	} else if len(m.titles) > maxVisibleItems {
-		b.WriteByte('\n')
-		b.WriteString(hintStyle.Render(fmt.Sprintf("Showing %d-%d of %d.", start+1, end, len(m.titles))))
-		b.WriteByte('\n')
+			line := fmt.Sprintf("#%d %s (%s) downloads=%d trusted=%s", sub.ID, releaseName, sub.Format, sub.Downloads, trusted)
+			b.WriteString(renderSelectableLine(i == m.cursor, line))
+			b.WriteByte('\n')
+		}
+		if len(m.subtitles) == 0 {
+			b.WriteString(hintStyle.Render("  (no subtitles loaded)"))
+			b.WriteByte('\n')
+		} else if len(m.subtitles) > maxVisibleItems {
+			b.WriteByte('\n')
+			b.WriteString(hintStyle.Render(fmt.Sprintf("Showing %d-%d of %d.", start+1, end, len(m.subtitles))))
+			b.WriteByte('\n')
+		}
 	}
 
 	b.WriteByte('\n')
@@ -183,9 +359,25 @@ func (m Model) updateSearchState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		selected := m.titles[m.cursor]
+		m.hasTitle = true
+		m.activeTitle = selected
+		m.activeSeason = 0
+		m.hasEpisode = false
+		m.seasons = nil
+		m.allEpisodes = nil
+		m.episodes = nil
+		m.subtitles = nil
 		m.errorMessage = ""
-		m.statusMessage = fmt.Sprintf("Selected %q. Next steps (series/episode/subtitle) will come in follow-up PRs.", selected.Name)
-		return m, nil
+		m.loading = true
+		m.cancelSearch()
+
+		if selected.IsSeries() {
+			m.statusMessage = ""
+			return m, tea.Batch(listEpisodesCmd(m.service, selected), m.spinner.Tick)
+		}
+
+		m.statusMessage = ""
+		return m, tea.Batch(listSubtitlesForTitleCmd(m.service, selected), m.spinner.Tick)
 	}
 
 	previousQuery := m.input.Value()
@@ -196,6 +388,12 @@ func (m Model) updateSearchState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, inputCmd
 	}
 
+	m.state = stateSearch
+	m.seasons = nil
+	m.allEpisodes = nil
+	m.episodes = nil
+	m.subtitles = nil
+	m.activeSeason = 0
 	m.cursor = 0
 	m.errorMessage = ""
 
@@ -214,6 +412,88 @@ func (m Model) updateSearchState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMessage = "Waiting for debounce before searching..."
 
 	return m, tea.Batch(inputCmd, debounceSearchCmd(query, m.debounceToken))
+}
+
+func (m Model) updateSeasonState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up":
+		m.moveCursor(-1, len(m.seasons))
+		return m, nil
+	case "down":
+		m.moveCursor(1, len(m.seasons))
+		return m, nil
+	case "enter":
+		if len(m.seasons) == 0 {
+			return m, nil
+		}
+
+		season := m.seasons[m.cursor]
+		episodes := filterEpisodesBySeason(m.allEpisodes, season)
+		if len(episodes) == 0 {
+			m.statusMessage = fmt.Sprintf("No episodes found for season %d.", season)
+			return m, nil
+		}
+
+		m.activeSeason = season
+		m.episodes = episodes
+		m.cursor = 0
+		m.errorMessage = ""
+		m.state = stateEpisodes
+		m.statusMessage = fmt.Sprintf("Season %d selected. Choose an episode and press enter.", season)
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) updateEpisodeState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up":
+		m.moveCursor(-1, len(m.episodes))
+		return m, nil
+	case "down":
+		m.moveCursor(1, len(m.episodes))
+		return m, nil
+	case "enter":
+		if len(m.episodes) == 0 {
+			return m, nil
+		}
+
+		selected := m.episodes[m.cursor]
+		m.activeEpisode = selected
+		m.hasEpisode = true
+		m.errorMessage = ""
+		m.loading = true
+		m.statusMessage = ""
+
+		return m, tea.Batch(listSubtitlesForEpisodeCmd(m.service, selected), m.spinner.Tick)
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) updateSubtitleState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up":
+		m.moveCursor(-1, len(m.subtitles))
+		return m, nil
+	case "down":
+		m.moveCursor(1, len(m.subtitles))
+		return m, nil
+	case "enter":
+		if len(m.subtitles) == 0 {
+			return m, nil
+		}
+
+		selected := m.subtitles[m.cursor]
+		m.loading = true
+		m.errorMessage = ""
+		m.statusMessage = ""
+
+		return m, tea.Batch(downloadSubtitleCmd(m.service, selected), m.spinner.Tick)
+	default:
+		return m, nil
+	}
 }
 
 func (m Model) handleDebounce(msg debounceSearchMsg) (tea.Model, tea.Cmd) {
@@ -301,14 +581,6 @@ func minInt(a int, b int) int {
 	return b
 }
 
-func maxInt(a int, b int) int {
-	if a > b {
-		return a
-	}
-
-	return b
-}
-
 func visibleWindowBounds(total int, cursor int) (start int, end int) {
 	if total <= 0 {
 		return 0, 0
@@ -332,6 +604,88 @@ func visibleWindowBounds(total int, cursor int) (start int, end int) {
 	}
 
 	return start, end
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+func collectSeasons(episodes []model.Episode) []int {
+	if len(episodes) == 0 {
+		return nil
+	}
+
+	seen := make(map[int]struct{})
+	seasons := make([]int, 0)
+	for _, episode := range episodes {
+		if episode.Season <= 0 {
+			continue
+		}
+
+		if _, ok := seen[episode.Season]; ok {
+			continue
+		}
+
+		seen[episode.Season] = struct{}{}
+		seasons = append(seasons, episode.Season)
+	}
+
+	sort.Ints(seasons)
+	return seasons
+}
+
+func filterEpisodesBySeason(episodes []model.Episode, season int) []model.Episode {
+	if len(episodes) == 0 {
+		return nil
+	}
+
+	filtered := make([]model.Episode, 0)
+	for _, episode := range episodes {
+		if episode.Season == season {
+			filtered = append(filtered, episode)
+		}
+	}
+
+	return filtered
+}
+
+func (m Model) navigateBack() (tea.Model, tea.Cmd) {
+	m.errorMessage = ""
+	switch m.state {
+	case stateSubtitles:
+		if m.hasTitle && m.activeTitle.IsSeries() {
+			m.state = stateEpisodes
+			if len(m.episodes) > 0 {
+				m.statusMessage = "Back to episodes."
+			} else {
+				m.state = stateSeasons
+				m.statusMessage = "Back to seasons."
+			}
+		} else {
+			m.state = stateSearch
+			m.statusMessage = "Back to search results."
+		}
+		m.cursor = 0
+	case stateEpisodes:
+		if len(m.seasons) > 0 {
+			m.state = stateSeasons
+			m.statusMessage = "Back to seasons."
+		} else {
+			m.state = stateSearch
+			m.statusMessage = "Back to search results."
+		}
+		m.cursor = 0
+	case stateSeasons:
+		m.state = stateSearch
+		m.statusMessage = "Back to search results."
+		m.cursor = 0
+	}
+
+	return m, nil
 }
 
 func (m *Model) cancelSearch() {
@@ -362,5 +716,61 @@ func searchTitlesCmd(parent context.Context, app *service.SubtitleService, reque
 			titles:    titles,
 			err:       err,
 		}
+	}
+}
+
+func listEpisodesCmd(app *service.SubtitleService, series model.Title) tea.Cmd {
+	return func() tea.Msg {
+		if app == nil {
+			return episodesResultMsg{err: fmt.Errorf("service is not configured")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		episodes, err := app.ListEpisodes(ctx, series)
+		return episodesResultMsg{episodes: episodes, err: err}
+	}
+}
+
+func listSubtitlesForTitleCmd(app *service.SubtitleService, title model.Title) tea.Cmd {
+	return func() tea.Msg {
+		if app == nil {
+			return subtitlesResultMsg{err: fmt.Errorf("service is not configured")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		subtitles, err := app.ListSubtitlesForTitle(ctx, title)
+		return subtitlesResultMsg{subtitles: subtitles, err: err}
+	}
+}
+
+func listSubtitlesForEpisodeCmd(app *service.SubtitleService, episode model.Episode) tea.Cmd {
+	return func() tea.Msg {
+		if app == nil {
+			return subtitlesResultMsg{err: fmt.Errorf("service is not configured")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		subtitles, err := app.ListSubtitlesForEpisode(ctx, episode)
+		return subtitlesResultMsg{subtitles: subtitles, err: err}
+	}
+}
+
+func downloadSubtitleCmd(app *service.SubtitleService, subtitle model.Subtitle) tea.Cmd {
+	return func() tea.Msg {
+		if app == nil {
+			return downloadResultMsg{err: fmt.Errorf("service is not configured")}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		result, err := app.DownloadSubtitle(ctx, subtitle)
+		return downloadResultMsg{result: result, err: err}
 	}
 }
