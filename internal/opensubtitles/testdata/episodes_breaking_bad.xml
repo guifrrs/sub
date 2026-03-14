@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opensubtitles>
+  <search>
+    <results>
+      <subtitle>
+        <MovieName>Breaking Bad</MovieName>
+        <EpisodeName Link="/en/search/sublanguageid-eng/imdbid-2000001">Seven Thirty-Seven</EpisodeName>
+        <SeriesSeason>2</SeriesSeason>
+        <SeriesEpisode>1</SeriesEpisode>
+      </subtitle>
+      <subtitle>
+        <MovieName>Breaking Bad</MovieName>
+        <EpisodeName Link="/en/search/sublanguageid-eng/imdbid-1000001">Pilot</EpisodeName>
+        <SeriesSeason>1</SeriesSeason>
+        <SeriesEpisode>1</SeriesEpisode>
+      </subtitle>
+      <subtitle>
+        <MovieName>Breaking Bad</MovieName>
+        <EpisodeName Link="/en/search/sublanguageid-eng/imdbid-9999999">Pilot Duplicate</EpisodeName>
+        <SeriesSeason>1</SeriesSeason>
+        <SeriesEpisode>1</SeriesEpisode>
+      </subtitle>
+      <subtitle>
+        <MovieName>Breaking Bad</MovieName>
+        <EpisodeName Link="/en/search/sublanguageid-eng/imdbid-1000002">Cat's in the Bag...</EpisodeName>
+        <SeriesSeason>1</SeriesSeason>
+        <SeriesEpisode>2</SeriesEpisode>
+      </subtitle>
+      <subtitle>
+        <MovieName>Breaking Bad</MovieName>
+        <EpisodeName Link="/en/search/sublanguageid-eng/imdbid-0">Invalid</EpisodeName>
+        <SeriesSeason>0</SeriesSeason>
+        <SeriesEpisode>0</SeriesEpisode>
+      </subtitle>
+    </results>
+  </search>
+</opensubtitles>

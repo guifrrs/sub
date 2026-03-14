@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opensubtitles>
+  <search>
+    <results>
+      <subtitle>
+        <IDSubtitle LinkDownload="https://dl.opensubtitles.org/en/download/subad/10991166">10991166</IDSubtitle>
+        <ISO639>en</ISO639>
+        <LanguageName></LanguageName>
+        <SubFormat>srt</SubFormat>
+        <MovieReleaseName>Breaking.Bad.S01E01.1080p.BluRay.x264</MovieReleaseName>
+        <SubFromTrusted>1</SubFromTrusted>
+        <SubDownloadsCnt>7765</SubDownloadsCnt>
+        <SubRating>9.1</SubRating>
+      </subtitle>
+      <subtitle>
+        <IDSubtitle>10991167</IDSubtitle>
+        <ISO639>en</ISO639>
+        <LanguageName>English</LanguageName>
+        <SubFormat>srt</SubFormat>
+        <MovieReleaseName>ShouldBeIgnored</MovieReleaseName>
+        <SubFromTrusted>0</SubFromTrusted>
+        <SubDownloadsCnt>1</SubDownloadsCnt>
+        <SubRating>4.0</SubRating>
+      </subtitle>
+    </results>
+  </search>
+</opensubtitles>
