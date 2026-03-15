@@ -9,8 +9,9 @@ import (
 	"strings"
 
 	"sub/internal/model"
-	"sub/internal/service"
 )
+
+const minSuggestQueryLength = 2
 
 type suggestItem struct {
 	Name   string         `json:"name"`
@@ -51,7 +52,7 @@ func (v stringOrNumber) String() string {
 
 func (c *Client) SearchTitles(ctx context.Context, query string, language string) ([]model.Title, error) {
 	query = strings.TrimSpace(query)
-	if len(query) < service.MinSearchQueryLength {
+	if len(query) < minSuggestQueryLength {
 		return []model.Title{}, nil
 	}
 

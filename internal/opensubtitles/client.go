@@ -111,9 +111,13 @@ func (c *Client) doGetOnce(ctx context.Context, requestURL string) ([]byte, bool
 		return nil, false, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, true, fmt.Errorf("read response body: %w", err)
+	}
+
+	if len(body) > maxBodyBytes {
+		return nil, false, fmt.Errorf("response body too large: limit %d bytes", maxBodyBytes)
 	}
 
 	return body, false, nil
