@@ -2,12 +2,15 @@ GO ?= go
 APP ?= sub
 CMD ?= ./cmd/sub
 BIN_DIR ?= ./bin
+AIR ?= air
 
-.PHONY: help run build test fmt vet tidy check clean
+.PHONY: help run dev install-air build test fmt vet tidy check clean
 
 help: ## Show available commands
 	@printf "Available commands:\n"
 	@printf "  make run    - Run the CLI\n"
+	@printf "  make dev    - Run with live reload (air)\n"
+	@printf "  make install-air - Install air live-reload tool\n"
 	@printf "  make build  - Build binary into ./bin\n"
 	@printf "  make test   - Run tests\n"
 	@printf "  make fmt    - Format Go code\n"
@@ -18,6 +21,17 @@ help: ## Show available commands
 
 run: ## Run the CLI
 	$(GO) run $(CMD)
+
+dev: ## Run with live reload using air
+	@if command -v $(AIR) >/dev/null 2>&1; then \
+		$(AIR) -c .air.toml; \
+	else \
+		printf "air not found. Install with: make install-air\n"; \
+		exit 1; \
+	fi
+
+install-air: ## Install air live reload tool
+	$(GO) install github.com/air-verse/air@latest
 
 build: ## Build binary
 	@mkdir -p $(BIN_DIR)
